@@ -3,6 +3,9 @@
 #include <tuple>
 #include <vector>
 #include "bit_reader.h"
+//class CImgDisplay;
+#include "CImg.h"
+using namespace cimg_library;
 extern const int scan[8][8];
 extern const byte mask_macroblock_quant;
 extern const byte mask_macroblock_motion_f;
@@ -16,6 +19,9 @@ struct YCbCrBuffer {
 };
 class VideoDecoder {
 private:
+    /* display */
+    CImgDisplay main_disp;
+
     /* huffman trees */
     HuffmanTree ht_macroblock_addr;
     HuffmanTree ht_coded_block_pattern;

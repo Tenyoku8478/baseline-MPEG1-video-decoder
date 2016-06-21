@@ -30,6 +30,7 @@ void VideoDecoder::video_sequence(BitReader &stream) {
             group_of_pictures(stream);
         } while(stream.next_bits(group_start_code));
     } while(stream.next_bits(sequence_header_code));
+    display(b_buf); // last backward frame
     EAT(sequence_end_code);
 }
 
@@ -371,7 +372,4 @@ void VideoDecoder::write_block(int index) {
                     c_buf->cr[i+top][j+left] = block_buf[i][j];
         }
     }
-}
-
-void VideoDecoder::display(YCbCrBuffer *buf) {
 }

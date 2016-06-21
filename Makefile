@@ -1,10 +1,10 @@
 all: decoder
 
-decoder: main.o bit_reader.o video.o video_init.o
-	g++ --std=c++11 -lm $^ -o $@
+decoder: main.o bit_reader.o video.o video_init.o video_display.o
+	g++ --std=c++11 $^ -o $@ -lm -lpthread -lX11
 
 %.o: %.cpp
-	gcc --std=c++11 -lm -c $^
+	gcc --std=c++11 -c $^
 
 clean:
 	rm -rf *.o decoder
