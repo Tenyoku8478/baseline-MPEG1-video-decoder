@@ -1,6 +1,8 @@
 #include <cstdio>
+#include <cmath>
 #include <cstring>
 #include <cassert>
+#include <algorithm>
 #include "magic_code.h"
 #include "bit_reader.h"
 #include "video.h"
@@ -36,6 +38,7 @@ void VideoDecoder::sequence_header(BitReader &stream) {
     EAT(sequence_header_code);
     h_size = stream.read(12);
     v_size = stream.read(12);
+    mb_width = (h_size+15)/16;
     per_ratio = stream.read(4);
     picture_rate = stream.read(4);
     bit_rate = stream.read(18);
@@ -109,6 +112,13 @@ void VideoDecoder::picture(BitReader &stream) {
     EAT(picture_start_code);
     tmp_ref = stream.read(10);
     coding_type = stream.read(3);
+
+    /* 3-Frame Buffers Algorithm */
+    if(coding_type <= 2) {
+        std::swap(f_buf, b_buf);
+        display(f_buf);
+    }
+
     vbv_delay = stream.read(16);
     if(coding_type == 2 || coding_type == 3) {
         full_pel_forward_vector = stream.read();
@@ -146,10 +156,18 @@ void VideoDecoder::picture(BitReader &stream) {
     do {
         slice(stream);
     } while(is_slice_start_code(stream));
+
+    /* 3-Frame Buffers Algorithm */
+    if(coding_type <= 2) {
+        std::swap(c_buf, b_buf);
+    }
+    else {
+        display(c_buf);
+    }
 }
 
 void VideoDecoder::slice(BitReader &stream) {
-    //LOG("slice");
+    LOG("slice");
     EAT(start_code);
     slice_vert_pos = stream.read(8);
     quant_scale = stream.read(5);
@@ -158,6 +176,11 @@ void VideoDecoder::slice(BitReader &stream) {
         stream.read(8); // extra_info_slice 
     }
     EAT("0");
+
+    /* reset previous variables */
+    past_intra_addr = -2;
+    macroblock_addr = (slice_vert_pos-1)*mb_width-1;
+
     do {
         macroblock(stream);
     } while(!stream.next_bits("00000000000000000000000"));
@@ -174,6 +197,7 @@ void VideoDecoder::macroblock(BitReader &stream) {
         macroblock_addr_increment += 33;
     }
     macroblock_addr_increment += ht_macroblock_addr.decode(stream);
+    macroblock_addr += macroblock_addr_increment;
     if(coding_type == 1)
         macroblock_type = ht_intra_macroblock_type.decode(stream);
     else if(coding_type == 2)
@@ -211,7 +235,17 @@ void VideoDecoder::macroblock(BitReader &stream) {
     for(int i=0; i<6; ++i) {
         if(cbp & (1<<(5-i)))
             block(i, stream);
+        else {
+            memset(dct_zz, 0, sizeof(dct_zz));
+        }
+        decode_block(i);
+        write_block(i);
     }
+
+    // update past_intra_addr
+    if(macroblock_type & mask_macroblock_intra)
+        past_intra_addr = macroblock_addr;
+
     if(coding_type == 4)
         EAT("1");
     return;
@@ -244,8 +278,100 @@ void VideoDecoder::block(int index, BitReader &stream) {
             int run, level;
             std::tie(run, level) = decode_run_level(stream);
             i = i+run+1;
+            assert(i < 64);
             dct_zz[i] = level;
         }
         EAT("10");
     }
 };
+
+inline void idct(int res[8], int mat[8]) {
+    for(int i=0; i<8; ++i) {
+        double now = ((double)mat[0])/sqrt(2);
+        for(int j=1; j<8; ++j)
+            now += mat[j]*cos((2*i+1)*j*M_PI/16);
+        res[i] = now/2;
+    }
+    return;
+}
+
+inline void transpose(int mat[8][8]) {
+    for(int i=0; i<7; ++i)
+        for(int j=i+1; j<8; ++j)
+            std::swap(mat[i][j], mat[j][i]);
+    return;
+}
+
+inline void idct2d(int mat[8][8]) {
+    int row[8][8];
+    memcpy(row, mat, sizeof(row));
+    for(int i=0; i<8; ++i)
+        idct(row[i], mat[i]);
+    transpose(row);
+    for(int i=0; i<8; ++i)
+        idct(mat[i], row[i]);
+    transpose(mat);
+    return;
+}
+
+void VideoDecoder::decode_block(int index) {
+    #define SIGN(x) ((x > 0) - (x < 0))
+    for(int m=0; m<8; ++m) {
+        for(int n=0; n<8; ++n) {
+            int i = scan[m][n];
+            block_buf[m][n] = (2*dct_zz[i]*quant_scale*intra_quant_matrix[i])/16;
+            if((block_buf[m][n] & 1) == 0)
+                block_buf[m][n] = block_buf[m][n] - SIGN(block_buf[m][n]);
+            if(block_buf[m][n] > 2047) block_buf[m][n] = 2047;
+            if(block_buf[m][n] < -2048) block_buf[m][n] = -2048;
+        }
+    }
+    int *dct_dc_past;
+    if(index < 4) dct_dc_past = &dct_dc_y_past;
+    else if(index == 4) dct_dc_past = &dct_dc_cb_past;
+    else dct_dc_past = &dct_dc_cr_past;
+
+    block_buf[0][0] = dct_zz[0]*8;
+    if((index == 0 || index > 3) && macroblock_addr-past_intra_addr > 1)
+        block_buf[0][0] = 128*8 + block_buf[0][0];
+    else {
+        block_buf[0][0] = *dct_dc_past + block_buf[0][0];
+    }
+    *dct_dc_past = block_buf[0][0];
+    idct2d(block_buf);
+}
+
+void VideoDecoder::write_block(int index) {
+    int mb_row = macroblock_addr/mb_width;
+    int mb_col = macroblock_addr%mb_width;
+    if(index <=3) {
+        int top = mb_row*16;
+        int left = mb_col*16;
+        switch(index) {
+            case 0: break;
+            case 1: left+=8; break;
+            case 2: top+=8; break;
+            case 3: left+=8, top+=8; break;
+            default: assert(false);
+        }
+        for(int i=0; i<8; ++i)
+            for(int j=0; j<8; ++j)
+                c_buf->y[i+top][j+left] = block_buf[i][j];
+    }
+    else {
+        int top = mb_row*8;
+        int left = mb_col*8;
+        if(index == 4) {
+            for(int i=0; i<8; ++i)
+                for(int j=0; j<8; ++j)
+                    c_buf->cb[i+top][j+left] = block_buf[i][j];
+        } else {
+            for(int i=0; i<8; ++i)
+                for(int j=0; j<8; ++j)
+                    c_buf->cr[i+top][j+left] = block_buf[i][j];
+        }
+    }
+}
+
+void VideoDecoder::display(YCbCrBuffer *buf) {
+}

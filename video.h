@@ -3,11 +3,17 @@
 #include <tuple>
 #include <vector>
 #include "bit_reader.h"
+extern const int scan[8][8];
 extern const byte mask_macroblock_quant;
 extern const byte mask_macroblock_motion_f;
 extern const byte mask_macroblock_motion_b;
 extern const byte mask_macroblock_pattern;
 extern const byte mask_macroblock_intra;
+struct YCbCrBuffer {
+    int y[768][576];
+    int cb[384][288];
+    int cr[384][288];
+};
 class VideoDecoder {
 private:
     /* huffman trees */
@@ -23,7 +29,7 @@ private:
     std::vector<int> run_list, level_list;
 
     /* sequence header */
-    int h_size, v_size;
+    int h_size, v_size, mb_width;
     byte per_ratio, picture_rate;
     int bit_rate;
     int vbv_buffer_size;
@@ -53,10 +59,17 @@ private:
     int motion_h_b_code, motion_h_b_r;
     int motion_v_b_code, motion_v_b_r;
 
-    /* block */
+    /* buffer */
     int dct_zz[64];
+    int block_buf[8][8];
+    YCbCrBuffer *b_buf, *c_buf, *f_buf;
 
-    /* prev */
+    /* now */
+    int macroblock_addr;
+
+    /* past */
+    int past_intra_addr;
+    int dct_dc_y_past, dct_dc_cb_past, dct_dc_cr_past;
 
     std::tuple<int, int> decode_run_level(BitReader &stream, bool first=false);
     
@@ -69,5 +82,8 @@ public:
     void slice(BitReader &stream);
     void macroblock(BitReader &stream);
     void block(int index, BitReader &stream);
+    void display(YCbCrBuffer *buf);
+    void decode_block(int index);
+    void write_block(int index);
 };
 #endif

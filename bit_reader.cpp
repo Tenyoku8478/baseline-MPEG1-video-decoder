@@ -45,9 +45,10 @@ bool BitReader::next_bits(const char *const bits, bool keep) {
 }
 
 void BitReader::next_start_code() {
-    mask = 0; // drop incomplele byte
+    while(mask != 0)
+        assert(next_bits("0", false));
     while(!next_bits(start_code))
-        fseek(file, 1, SEEK_CUR);
+        assert(next_bits("00000000", false));
 }
 
 void BitReader::save() {
