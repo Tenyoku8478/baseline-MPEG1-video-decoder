@@ -292,12 +292,62 @@ void VideoDecoder::block(int index, BitReader &stream) {
 };
 
 inline void idct(double res[8], double mat[8]) {
-    for(int i=0; i<8; ++i) {
-        double now = mat[0]/sqrt(2);
-        for(int j=1; j<8; ++j)
-            now += mat[j]*cos((2*i+1)*j*M_PI/16);
-        res[i] = now/2;
-    }
+    double c2 = 2*cos(M_PI/8), c4 = 2*cos(2*M_PI/8), c6 = 2*cos(3*M_PI/8);
+    double sq8 = sqrt(8);
+
+    // B1
+    double a0 = (1./8*mat[0])*sq8;
+    double a1 = (1./8*mat[4])*sq8;
+    double a2 = (1./8*mat[2] - 1./8*mat[6])*sq8;
+    double a3 = (1./8*mat[2] + 1./8*mat[6])*sq8;
+    double a4 = (1./8*mat[5] - 1./8*mat[3])*sq8;
+    double temp1 = (1./8*mat[1] + 1./8*mat[7])*sq8;
+    double temp2 = (1./8*mat[3] + 1./8*mat[5])*sq8;
+    double a5 = temp1 - temp2;
+    double a6 = (1./8*mat[1] - 1./8*mat[7])*sq8;
+    double a7 = temp1+temp2;
+
+    // M
+    double b0 = a0;
+    double b1 = a1;
+    double b2 = a2*c4;
+    double b3 = a3;
+    double Q = c2-c6, R = c2+c6, temp4 = c6*(a4+a6);
+    double b4 = -Q*a4 - temp4;
+    double b5 = a5*c4;
+    double b6 = R*a6 - temp4;
+    double b7 = a7;
+
+    // A1
+    double temp3 = b6 - b7;
+    double n0 = temp3 - b5;
+    double n1 = b0 - b1;
+    double n2 = b2 - b3;
+    double n3 = b0 + b1;
+    double n4 = temp3;
+    double n5 = b4;
+    double n6 = b3;
+    double n7 = b7;
+
+    // A2
+    double m0 = n7;
+    double m1 = n0;
+    double m2 = n4;
+    double m3 = n1 + n2;
+    double m4 = n3 + n6;
+    double m5 = n1 - n2;
+    double m6 = n3 - n6;
+    double m7 = n5 - n0;
+
+    // A3
+    res[0] = m4 + m0;
+    res[1] = m3 + m2;
+    res[2] = m5 - m1;
+    res[3] = m6 - m7;
+    res[4] = m6 + m7;
+    res[5] = m5 + m1;
+    res[6] = m3 - m2;
+    res[7] = m4 - m0;
     return;
 }
 
