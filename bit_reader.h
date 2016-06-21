@@ -4,7 +4,7 @@
 #include "magic_code.h"
 class BitReader {
 private:
-    FILE *file;
+    FILE *const file;
     byte now;
     byte mask;
 
@@ -29,7 +29,7 @@ private:
         bool leaf;
         Node *child[2];
         Node () {
-            child[0] = child[1] = 0;
+            child[0] = child[1] = nullptr;
             leaf = false;
         }
     } *root;

@@ -2,8 +2,7 @@
 #include <cstring>
 #include "bit_reader.h"
 
-BitReader::BitReader(FILE *__file) {
-    file = __file;
+BitReader::BitReader(FILE *__file): file(__file) {
     now = prev = 0;
     mask = prev_mask = 0;
 }
@@ -84,8 +83,11 @@ HuffmanTree::HuffmanTree() {
 
 byte HuffmanTree::decode(BitReader &bitReader) {
     Node *now = root;
-    while(!now->leaf) {
-        now = now->child[bitReader.read()];
+    while(now and !now->leaf) {
+        int tmp = bitReader.read();
+        //printf("# %d\n", tmp);
+        now = now->child[tmp];
     }
+    assert(now);
     return now->val;
 }
