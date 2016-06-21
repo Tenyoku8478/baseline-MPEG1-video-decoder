@@ -62,14 +62,14 @@ std::tuple<int, int> VideoDecoder::decode_run_level(BitReader &stream, bool firs
         EAT("000001");
         run = stream.read(6);
         int tmp = stream.read(8);
-        if(tmp == 0x00) { // negative
+        if(tmp == 0x00) { // >=128
             level = stream.read(8);
         }
-        else if(tmp == 0x80) { // >= 128
+        else if(tmp == 0x80) { // negative
             level = stream.read(8)-256;
         }
         else { // otherwise
-            level = tmp;
+            level = (char)tmp;
         }
     }
     else {

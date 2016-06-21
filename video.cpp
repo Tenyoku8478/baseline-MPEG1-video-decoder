@@ -264,9 +264,14 @@ void VideoDecoder::block(int index, BitReader &stream) {
         else {
             size = ht_dct_dc_size_chrominance.decode(stream);
         }
-        int dct_dc_diff = stream.read(size);
-        if(dct_dc_diff & (1<<(size-1))) dct_zz[0] = dct_dc_diff;
-        else dct_zz[0] = (-1 << size) | (dct_dc_diff+1);
+        if(size == 0) {
+            dct_zz[0] = 0;
+        }
+        else {
+            int dct_dc_diff = stream.read(size);
+            if(dct_dc_diff & (1<<(size-1))) dct_zz[0] = dct_dc_diff;
+            else dct_zz[0] = (-1 << size) | (dct_dc_diff+1);
+        }
     }
     else {
         int run, level;
@@ -286,9 +291,9 @@ void VideoDecoder::block(int index, BitReader &stream) {
     }
 };
 
-inline void idct(int res[8], int mat[8]) {
+inline void idct(double res[8], double mat[8]) {
     for(int i=0; i<8; ++i) {
-        double now = ((double)mat[0])/sqrt(2);
+        double now = mat[0]/sqrt(2);
         for(int j=1; j<8; ++j)
             now += mat[j]*cos((2*i+1)*j*M_PI/16);
         res[i] = now/2;
@@ -296,15 +301,15 @@ inline void idct(int res[8], int mat[8]) {
     return;
 }
 
-inline void transpose(int mat[8][8]) {
+inline void transpose(double mat[8][8]) {
     for(int i=0; i<7; ++i)
         for(int j=i+1; j<8; ++j)
             std::swap(mat[i][j], mat[j][i]);
     return;
 }
 
-inline void idct2d(int mat[8][8]) {
-    int row[8][8];
+inline void idct2d(double mat[8][8]) {
+    double row[8][8];
     memcpy(row, mat, sizeof(row));
     for(int i=0; i<8; ++i)
         idct(row[i], mat[i]);
@@ -320,21 +325,24 @@ void VideoDecoder::decode_block(int index) {
     for(int m=0; m<8; ++m) {
         for(int n=0; n<8; ++n) {
             int i = scan[m][n];
-            block_buf[m][n] = (2*dct_zz[i]*quant_scale*intra_quant_matrix[i])/16;
-            if((block_buf[m][n] & 1) == 0)
-                block_buf[m][n] = block_buf[m][n] - SIGN(block_buf[m][n]);
-            if(block_buf[m][n] > 2047) block_buf[m][n] = 2047;
-            if(block_buf[m][n] < -2048) block_buf[m][n] = -2048;
+            int tmp;
+            tmp = (2*dct_zz[i]*quant_scale*intra_quant_matrix[i])/16;
+            if((tmp & 1) == 0)
+                tmp = tmp - SIGN(tmp);
+            if(tmp > 2047) tmp = 2047;
+            if(tmp < -2048) tmp = -2048;
+            block_buf[m][n] = tmp;
         }
     }
-    int *dct_dc_past;
+    double *dct_dc_past;
     if(index < 4) dct_dc_past = &dct_dc_y_past;
     else if(index == 4) dct_dc_past = &dct_dc_cb_past;
     else dct_dc_past = &dct_dc_cr_past;
 
     block_buf[0][0] = dct_zz[0]*8;
-    if((index == 0 || index > 3) && macroblock_addr-past_intra_addr > 1)
+    if((index == 0 || index > 3) && macroblock_addr-past_intra_addr > 1) {
         block_buf[0][0] = 128*8 + block_buf[0][0];
+    }
     else {
         block_buf[0][0] = *dct_dc_past + block_buf[0][0];
     }
@@ -357,7 +365,7 @@ void VideoDecoder::write_block(int index) {
         }
         for(int i=0; i<8; ++i)
             for(int j=0; j<8; ++j)
-                c_buf->y[i+top][j+left] = block_buf[i][j];
+                c_buf->y[i+top][j+left] = std::max(0., block_buf[i][j]);
     }
     else {
         int top = mb_row*8;
@@ -365,11 +373,11 @@ void VideoDecoder::write_block(int index) {
         if(index == 4) {
             for(int i=0; i<8; ++i)
                 for(int j=0; j<8; ++j)
-                    c_buf->cb[i+top][j+left] = block_buf[i][j];
+                    c_buf->cb[i+top][j+left] = std::max(0., block_buf[i][j]);
         } else {
             for(int i=0; i<8; ++i)
                 for(int j=0; j<8; ++j)
-                    c_buf->cr[i+top][j+left] = block_buf[i][j];
+                    c_buf->cr[i+top][j+left] = std::max(0., block_buf[i][j]);
         }
     }
 }

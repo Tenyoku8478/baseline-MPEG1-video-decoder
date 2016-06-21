@@ -13,9 +13,9 @@ extern const byte mask_macroblock_motion_b;
 extern const byte mask_macroblock_pattern;
 extern const byte mask_macroblock_intra;
 struct YCbCrBuffer {
-    int y[768][576];
-    int cb[384][288];
-    int cr[384][288];
+    double y[768][576];
+    double cb[384][288];
+    double cr[384][288];
 };
 class VideoDecoder {
 private:
@@ -67,7 +67,7 @@ private:
 
     /* buffer */
     int dct_zz[64];
-    int block_buf[8][8];
+    double block_buf[8][8];
     YCbCrBuffer *b_buf, *c_buf, *f_buf;
 
     /* now */
@@ -75,7 +75,7 @@ private:
 
     /* past */
     int past_intra_addr;
-    int dct_dc_y_past, dct_dc_cb_past, dct_dc_cr_past;
+    double dct_dc_y_past, dct_dc_cb_past, dct_dc_cr_past;
 
     std::tuple<int, int> decode_run_level(BitReader &stream, bool first=false);
     
