@@ -15,4 +15,8 @@ void VideoDecoder::display(YCbCrBuffer *buf) {
             */
         }
     main_disp.display(CImg<byte>(&buffer[0][0][0], 320, 256, 1, 3, true));
+    /*
+    static int cnt = 0;
+    if(++cnt == 4) while(1);
+    */
 }

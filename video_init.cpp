@@ -65,7 +65,7 @@ std::tuple<int, int> VideoDecoder::decode_run_level(BitReader &stream, bool firs
         if(tmp == 0x00) { // >=128
             level = stream.read(8);
         }
-        else if(tmp == 0x80) { // negative
+        else if(tmp == 0x80) { // <= -128
             level = stream.read(8)-256;
         }
         else { // otherwise

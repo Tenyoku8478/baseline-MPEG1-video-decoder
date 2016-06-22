@@ -36,6 +36,6 @@ private:
 public:
     HuffmanTree();
     void insertNode(const char *const path, int val);
-    byte decode(BitReader &bitReader);
+    int decode(BitReader &bitReader);
 };
 #endif

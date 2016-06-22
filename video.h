@@ -60,10 +60,6 @@ private:
 
     /* macroblock */
     byte macroblock_type;
-    int motion_h_f_code, motion_h_f_r;
-    int motion_v_f_code, motion_v_f_r;
-    int motion_h_b_code, motion_h_b_r;
-    int motion_v_b_code, motion_v_b_r;
 
     /* buffer */
     int dct_zz[64];
@@ -72,10 +68,14 @@ private:
 
     /* now */
     int macroblock_addr;
+    int recon_right_for, recon_down_for;
+    int recon_right_back, recon_down_back;
 
     /* past */
     int past_intra_addr;
     double dct_dc_y_past, dct_dc_cb_past, dct_dc_cr_past;
+    int recon_right_for_prev, recon_down_for_prev;
+    int recon_right_back_prev, recon_down_back_prev;
 
     std::tuple<int, int> decode_run_level(BitReader &stream, bool first=false);
     
@@ -88,8 +88,11 @@ public:
     void slice(BitReader &stream);
     void macroblock(BitReader &stream);
     void block(int index, BitReader &stream);
+
+    void write_skipped_macroblock(int address);
+    void add_motion_vector(int index);
+    void recon_idct(int index);
+    void write_block(int index, int addr);
     void display(YCbCrBuffer *buf);
-    void decode_block(int index);
-    void write_block(int index);
 };
 #endif

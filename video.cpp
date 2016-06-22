@@ -195,11 +195,44 @@ void VideoDecoder::slice(BitReader &stream) {
     /* reset previous variables */
     past_intra_addr = -2;
     macroblock_addr = (slice_vert_pos-1)*mb_width-1;
+    recon_right_for_prev = recon_down_for_prev = 0;
+    recon_right_back_prev = recon_down_back_prev = 0;
+    dct_dc_y_past = dct_dc_cb_past = dct_dc_cr_past = 1024;
 
     do {
         macroblock(stream);
     } while(!stream.next_bits("00000000000000000000000"));
     stream.next_start_code();
+}
+
+inline int calc_recon_motion(int f, int motion_code,
+        int motion_r, int &recon_for_prev, bool full_pel_vector) {
+    int complement_r = (f==1 || motion_code==0)?(0):(f-1-motion_r);
+    int little = motion_code*f, big;
+    if(little==0) {
+        big = 0;
+    } else {
+        if(little > 0) {
+            little = little - complement_r;
+            big = little - 32*f;
+        } else {
+            little = little + complement_r;
+            big = little + 32*f;
+        }
+    }
+
+    int max_v = 16*f -1;
+    int min_v = -16*f;
+
+    int recon_for;
+    int new_v = recon_for_prev + little;
+    if(min_v <= new_v && new_v <= max_v)
+        recon_for = recon_for_prev + little;
+    else
+        recon_for = recon_for_prev + big;
+    recon_for_prev = recon_for;
+    if(full_pel_vector) recon_for = recon_for << 1;
+    return recon_for;
 }
 
 /* parse macroblock layer */
@@ -214,7 +247,14 @@ void VideoDecoder::macroblock(BitReader &stream) {
         macroblock_addr_increment += 33;
     }
     macroblock_addr_increment += ht_macroblock_addr.decode(stream);
+
+    /* handle skipped macroblock */
+    for(int i=1; i<macroblock_addr_increment; ++i)
+        write_skipped_macroblock(macroblock_addr+i);
+
+    // update macroblcok_addr
     macroblock_addr += macroblock_addr_increment;
+
     // get coded macroblock type
     if(coding_type == 1)
         macroblock_type = ht_intra_macroblock_type.decode(stream);
@@ -224,44 +264,87 @@ void VideoDecoder::macroblock(BitReader &stream) {
         macroblock_type = ht_b_macroblock_type.decode(stream);
     else
         assert(false);
+
     // check quant_scale field flag
-    if(macroblock_type & mask_macroblock_quant)
+    if(macroblock_type & mask_macroblock_quant) {
         quant_scale = stream.read(5);
+        assert(quant_scale != 0);
+    }
+
     // check motion forward field flag
     if(macroblock_type & mask_macroblock_motion_f) {
+        int motion_h_f_code, motion_h_f_r;
+        int motion_v_f_code, motion_v_f_r;
+
         motion_h_f_code = ht_motion_vector.decode(stream);
         if((forward_f != 1) and
             (motion_h_f_code != 0))
             motion_h_f_r = stream.read(forward_r_size);
+
         motion_v_f_code = ht_motion_vector.decode(stream);
         if((forward_f != 1) and
             (motion_v_f_code != 0))
             motion_v_f_r = stream.read(forward_r_size);
+
+        recon_right_for =
+            calc_recon_motion(forward_f, motion_h_f_code, motion_h_f_r,
+                recon_right_for_prev, full_pel_forward_vector);
+
+        recon_down_for =
+            calc_recon_motion(forward_f, motion_v_f_code, motion_v_f_r,
+                recon_down_for_prev, full_pel_forward_vector);
+    } else {
+        recon_down_for_prev = recon_right_for_prev = 0;
+        recon_right_for = recon_down_for = 0;
     }
+
     // check motion backward field flag
     if(macroblock_type & mask_macroblock_motion_b) {
+        int motion_h_b_code, motion_h_b_r;
+        int motion_v_b_code, motion_v_b_r;
+
         motion_h_b_code = ht_motion_vector.decode(stream);
         if((backward_f != 1) and
             (motion_h_b_code != 0))
             motion_h_b_r = stream.read(backward_r_size);
         motion_v_b_code = ht_motion_vector.decode(stream);
+
         if((backward_f != 1) and
             (motion_v_b_code != 0))
             motion_v_b_r = stream.read(backward_r_size);
+
+        recon_right_back =
+            calc_recon_motion(backward_f, motion_h_b_code, motion_h_b_r,
+                recon_right_back_prev, full_pel_backward_vector);
+
+        recon_down_for =
+            calc_recon_motion(backward_f, motion_v_b_code, motion_v_b_r,
+                recon_down_back_prev, full_pel_backward_vector);
+    } else {
+        recon_down_back_prev = recon_right_back_prev = 0;
+        recon_right_back = recon_down_back = 0;
     }
+
     // init cbp with all '1'
-    byte cbp = (1<<6) - 1;
+    byte cbp = 0;
     if(macroblock_type & mask_macroblock_pattern) {
         cbp = ht_coded_block_pattern.decode(stream);
     }
+    else if(macroblock_type & mask_macroblock_intra) {
+        cbp = (1<<6) - 1;
+    }
+
     for(int i=0; i<6; ++i) {
-        if(cbp & (1<<(5-i)))
+        if(cbp & (1<<(5-i))) {
             block(i, stream);
-        else {
-            memset(dct_zz, 0, sizeof(dct_zz));
+            recon_idct(i);
+        } else {
+            for(int j=0; j<8; ++j) for(int k=0; k<8; ++k) block_buf[j][k] = 0;
         }
-        decode_block(i);
-        write_block(i);
+        if(!(macroblock_type & mask_macroblock_intra)) {
+            add_motion_vector(i);
+        }
+        write_block(i, macroblock_addr);
     }
 
     // update past_intra_addr
@@ -275,7 +358,7 @@ void VideoDecoder::macroblock(BitReader &stream) {
 
 void VideoDecoder::block(int index, BitReader &stream) {
     //LOG("block");
-    memset(dct_zz, 0, sizeof(dct_zz));
+    for(int i=1; i<64; ++i) dct_zz[i] = 0;
     int i=0;
     if(macroblock_type & mask_macroblock_intra) {
         // intra block
@@ -316,7 +399,9 @@ void VideoDecoder::block(int index, BitReader &stream) {
 };
 
 inline void idct(double res[8], double mat[8]) {
-    double c2 = 2*cos(M_PI/8), c4 = 2*cos(2*M_PI/8), c6 = 2*cos(3*M_PI/8);
+    double c2 = 2*cos(M_PI/8);
+    double c4 = 2*cos(2*M_PI/8);
+    double c6 = 2*cos(3*M_PI/8);
     double sq8 = sqrt(8);
 
     // B1
@@ -394,45 +479,200 @@ inline void idct2d(double mat[8][8]) {
     return;
 }
 
-void VideoDecoder::decode_block(int index) {
+void VideoDecoder::recon_idct(int index) {
     #define SIGN(x) ((x > 0) - (x < 0))
     // recontruct dct ac component
     for(int m=0; m<8; ++m) {
         for(int n=0; n<8; ++n) {
             int i = scan[m][n];
             int tmp;
-            tmp = (2*dct_zz[i]*quant_scale*intra_quant_matrix[i])/16;
+            if(macroblock_type & mask_macroblock_intra)
+                tmp =
+                    (2*dct_zz[i]*quant_scale*intra_quant_matrix[i])/16;
+            else
+                tmp = (((2*dct_zz[i])+SIGN(dct_zz[i]))*
+                    quant_scale*non_intra_quant_matrix[i])/16;
             if((tmp & 1) == 0)
                 tmp = tmp - SIGN(tmp);
             if(tmp > 2047) tmp = 2047;
             if(tmp < -2048) tmp = -2048;
+            if(dct_zz[i] == 0) tmp = 0;
             block_buf[m][n] = tmp;
         }
     }
 
-    // reconstruct dct dc component
-    double *dct_dc_past;
-    if(index < 4) dct_dc_past = &dct_dc_y_past;
-    else if(index == 4) dct_dc_past = &dct_dc_cb_past;
-    else dct_dc_past = &dct_dc_cr_past;
+    if(macroblock_type & mask_macroblock_intra) {
+        // reconstruct dct dc component
+        double *dct_dc_past;
+        if(index < 4) dct_dc_past = &dct_dc_y_past;
+        else if(index == 4) dct_dc_past = &dct_dc_cb_past;
+        else dct_dc_past = &dct_dc_cr_past;
 
-    block_buf[0][0] = dct_zz[0]*8;
-    if((index == 0 || index > 3) && macroblock_addr-past_intra_addr > 1) {
-        // first block
-        block_buf[0][0] = 128*8 + block_buf[0][0];
+        block_buf[0][0] = dct_zz[0]*8;
+        if((index == 0 || index > 3) &&
+            macroblock_addr-past_intra_addr > 1) {
+            // first block
+            block_buf[0][0] = 128*8 + block_buf[0][0];
+        }
+        else {
+            // not first block
+            block_buf[0][0] = *dct_dc_past + block_buf[0][0];
+        }
+        *dct_dc_past = block_buf[0][0];
     }
-    else {
-        // not first block
-        block_buf[0][0] = *dct_dc_past + block_buf[0][0];
-    }
-    *dct_dc_past = block_buf[0][0];
     idct2d(block_buf);
 }
 
-void VideoDecoder::write_block(int index) {
-    // calculate row, column
+template<int W>
+inline void add_pel_past(double pel[8][8], double pel_past[][W],
+        int recon_right_for, int recon_down_for,
+        int index, bool half,
+        int macroblock_addr, int mb_width) {
+        int right_for, down_for, right_half_for, down_half_for;
+    if(index < 4) {
+        right_for = recon_right_for >> 1;
+        down_for = recon_down_for >> 1;
+        right_half_for = recon_right_for - 2*right_for;
+        down_half_for = recon_down_for - 2*down_for;
+    } else {
+        right_for = (recon_right_for/2) >> 1;
+        down_for = (recon_down_for/2) >> 1;
+        right_half_for = recon_right_for/2 - 2*right_for;
+        down_half_for = recon_down_for/2 - 2*down_for;
+    }
+    
+    double weight = half?0.5:1;
+
     int mb_row = macroblock_addr/mb_width;
     int mb_col = macroblock_addr%mb_width;
+    int top = mb_row*16;
+    int left = mb_col*16;
+    switch(index) {
+        case 0: break;
+        case 1: left+=8; break;
+        case 2: top+=8; break;
+        case 3: left+=8, top+=8; break;
+        default: top /= 2, left /= 2;
+    }
+    assert(top+down_for > 0 || top+down_for+8 <= 240);
+    assert(left+right_for > 0 || left+right_for+8 <= 320);
+    if(!right_half_for && !down_half_for) {
+        for(int i=0; i<8; ++i)
+            for(int j=0; j<8; ++j) {
+                pel[i][j] +=
+                    pel_past[top+i+down_for][left+j+right_for]*weight;
+            }
+    } else if(!right_half_for && down_half_for) {
+        for(int i=0; i<8; ++i)
+            for(int j=0; j<8; ++j) {
+                pel[i][j] +=
+                    (pel_past[top+i+down_for][left+j+right_for] +
+                    pel_past[top+i+down_for+1][left+j+right_for])/2*weight;
+            }
+    } else if(right_half_for && !down_half_for) {
+        for(int i=0; i<8; ++i)
+            for(int j=0; j<8; ++j) {
+                pel[i][j] +=
+                    (pel_past[top+i+down_for][left+j+right_for] +
+                    pel_past[top+i+down_for][left+j+right_for+1])/2*weight;
+            }
+    } else if(right_half_for && down_half_for) {
+        for(int i=0; i<8; ++i)
+            for(int j=0; j<8; ++j) {
+                pel[i][j] +=
+                    (pel_past[top+i+down_for][left+j+right_for] +
+                    pel_past[top+i+down_for][left+j+right_for+1] +
+                    pel_past[top+i+down_for+1][left+j+right_for] +
+                    pel_past[top+i+down_for+1][left+j+right_for+1])/4*weight;
+            }
+    }
+}
+
+void VideoDecoder::write_skipped_macroblock(int address) {
+    bool has_f = coding_type == 2 || (macroblock_type & mask_macroblock_motion_f);
+    bool has_b = macroblock_type & mask_macroblock_motion_b;
+    bool half = has_f && has_b;
+
+    for(int y=0; y<4; ++y) {
+        for(int i=0; i<8; ++i) for(int j=0; j<8; ++j) block_buf[i][j] = 0;
+        if(has_f)
+            add_pel_past(block_buf, f_buf->y,
+                0, 0, y, half,
+                address, mb_width);
+        if(has_b)
+            add_pel_past(block_buf, b_buf->y,
+                0, 0, y, half,
+                address, mb_width);
+        write_block(y, address);
+    }
+    {
+        for(int i=0; i<8; ++i) for(int j=0; j<8; ++j) block_buf[i][j] = 0;
+        if(has_f)
+            add_pel_past(block_buf, f_buf->cb,
+                0, 0, 4, half,
+                address, mb_width);
+        if(has_b)
+            add_pel_past(block_buf, b_buf->cb,
+                0, 0, 4, half,
+                address, mb_width);
+        write_block(4, address);
+    }
+    {
+        for(int i=0; i<8; ++i) for(int j=0; j<8; ++j) block_buf[i][j] = 0;
+        if(has_f)
+            add_pel_past(block_buf, f_buf->cr,
+                0, 0, 5, half,
+                address, mb_width);
+        if(has_b)
+            add_pel_past(block_buf, b_buf->cr,
+                0, 0, 5, half,
+                address, mb_width);
+        write_block(5, address);
+    }
+
+    if(coding_type == 2) {
+        recon_right_for_prev = recon_down_for_prev = 0;
+    }
+}
+
+void VideoDecoder::add_motion_vector(int index) {
+    bool has_f = coding_type == 2 || (macroblock_type & mask_macroblock_motion_f);
+    bool has_b = macroblock_type & mask_macroblock_motion_b;
+    bool half = has_f && has_b;
+    if(has_f) {
+        if(index < 4)
+            add_pel_past(block_buf, f_buf->y,
+                recon_right_for, recon_down_for, index, half,
+                macroblock_addr, mb_width);
+        else if(index == 4)
+            add_pel_past(block_buf, f_buf->cb,
+                recon_right_for, recon_down_for, index, half,
+                macroblock_addr, mb_width);
+        else
+            add_pel_past(block_buf, f_buf->cr,
+                recon_right_for, recon_down_for, index, half,
+                macroblock_addr, mb_width);
+    }
+    if(has_b) {
+        if(index < 4)
+            add_pel_past(block_buf, b_buf->y,
+                recon_right_for, recon_down_for, index, half,
+                macroblock_addr, mb_width);
+        else if(index == 4)
+            add_pel_past(block_buf, b_buf->cb,
+                recon_right_for, recon_down_for, index, half,
+                macroblock_addr, mb_width);
+        else
+            add_pel_past(block_buf, b_buf->cr,
+                recon_right_for, recon_down_for, index, half,
+                macroblock_addr, mb_width);
+    }
+}
+
+void VideoDecoder::write_block(int index, int addr) {
+    // calculate row, column
+    int mb_row = addr/mb_width;
+    int mb_col = addr%mb_width;
     if(index <=3) {
         // Y
         int top = mb_row*16;
@@ -446,7 +686,8 @@ void VideoDecoder::write_block(int index) {
         }
         for(int i=0; i<8; ++i)
             for(int j=0; j<8; ++j)
-                c_buf->y[i+top][j+left] = std::max(0., block_buf[i][j]);
+                c_buf->y[i+top][j+left] =
+                    std::max(0., block_buf[i][j]);
     }
     else {
         int top = mb_row*8;
@@ -455,12 +696,14 @@ void VideoDecoder::write_block(int index) {
             // Cb
             for(int i=0; i<8; ++i)
                 for(int j=0; j<8; ++j)
-                    c_buf->cb[i+top][j+left] = std::max(0., block_buf[i][j]);
+                    c_buf->cb[i+top][j+left] =
+                        std::max(0., block_buf[i][j]);
         } else {
             // Cr
             for(int i=0; i<8; ++i)
                 for(int j=0; j<8; ++j)
-                    c_buf->cr[i+top][j+left] = std::max(0., block_buf[i][j]);
+                    c_buf->cr[i+top][j+left] =
+                        std::max(0., block_buf[i][j]);
         }
     }
 }
