@@ -11,4 +11,9 @@ void VideoDecoder::display(YCbCrBuffer *buf) {
             buffer[2*v_size*h_size + j*h_size + i] = std::max(0., std::min(255., 255./219*(buf->y[j][i]-16) + 255./112*0.886*(buf->cb[j/2][i/2]-128)));
         }
     main_disp.display(CImg<byte>(buffer, h_size, v_size, 1, 3, true));
+    if(main_disp.is_keySPACE()) {
+        while(main_disp.is_keySPACE());
+        while(!main_disp.is_keySPACE());
+        while(main_disp.is_keySPACE());
+    }
 }
