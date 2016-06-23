@@ -206,7 +206,7 @@ void VideoDecoder::slice(BitReader &stream) {
 }
 
 inline int calc_recon_motion(int f, int motion_code,
-        int motion_r, int &recon_for_prev, bool full_pel_vector) {
+        int motion_r, int &recon_prev, bool full_pel_vector) {
     int complement_r = (f==1 || motion_code==0)?(0):(f-1-motion_r);
     int little = motion_code*f, big;
     if(little==0) {
@@ -224,15 +224,15 @@ inline int calc_recon_motion(int f, int motion_code,
     int max_v = 16*f -1;
     int min_v = -16*f;
 
-    int recon_for;
-    int new_v = recon_for_prev + little;
+    int recon;
+    int new_v = recon_prev + little;
     if(min_v <= new_v && new_v <= max_v)
-        recon_for = recon_for_prev + little;
+        recon = recon_prev + little;
     else
-        recon_for = recon_for_prev + big;
-    recon_for_prev = recon_for;
-    if(full_pel_vector) recon_for = recon_for << 1;
-    return recon_for;
+        recon = recon_prev + big;
+    recon_prev = recon;
+    if(full_pel_vector) recon = recon << 1;
+    return recon;
 }
 
 /* parse macroblock layer */
