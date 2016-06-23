@@ -298,10 +298,6 @@ void VideoDecoder::macroblock(BitReader &stream) {
             // reset recon_for_prev
             recon_down_for_prev = recon_right_for_prev = 0;
             recon_right_for = recon_down_for = 0;
-        } else {
-            // obtain recon_for
-            recon_right_for = recon_right_for_prev;
-            recon_down_for = recon_down_for_prev;
         }
     }
 
@@ -314,8 +310,8 @@ void VideoDecoder::macroblock(BitReader &stream) {
         if((backward_f != 1) and
             (motion_h_b_code != 0))
             motion_h_b_r = stream.read(backward_r_size);
-        motion_v_b_code = ht_motion_vector.decode(stream);
 
+        motion_v_b_code = ht_motion_vector.decode(stream);
         if((backward_f != 1) and
             (motion_v_b_code != 0))
             motion_v_b_r = stream.read(backward_r_size);
@@ -327,10 +323,6 @@ void VideoDecoder::macroblock(BitReader &stream) {
         recon_down_for =
             calc_recon_motion(backward_f, motion_v_b_code, motion_v_b_r,
                 recon_down_back_prev, full_pel_backward_vector);
-    } else {
-        // obtain recon_back
-        recon_right_back = recon_right_back_prev;
-        recon_down_back = recon_down_back_prev;
     }
 
     // init cbp with all '1'
